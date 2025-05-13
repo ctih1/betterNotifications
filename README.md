@@ -13,3 +13,8 @@
 # Examples
 
 https://github.com/user-attachments/assets/9c6e6e86-5aef-43a2-a718-79954985827d
+
+
+## Why we need an external server
+Since netiher `window.Notification` nor Electron's notifications support replying, we had to use a 3rd party library.
+Well why coulnd't we just use a 3rd party dependency? Well, cross platform notification libraries often use compiled binaries. For example, `node-notifier` would technically work, but it requires editing some configuration files that we just don't have access to. https://www.npmjs.com/package/node-notifier#within-electron-packaging
