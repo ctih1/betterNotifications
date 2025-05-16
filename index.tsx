@@ -69,12 +69,21 @@ const settings = definePluginSettings({
 });
 
 function getChannelInfoFromTitle(title: string) {
-    let innerInfo = title.split(" (#")[1];
-    let data = innerInfo.slice(0, -1).split(", ");
-    return {
-        channel: data[0],
-        groupName: data[1]
-    };
+    try {
+        let innerInfo = title.split(" (#")[1];
+        let data = innerInfo.slice(0, -1).split(", ");
+        return {
+            channel: data[0],
+            groupName: data[1]
+        };
+    } catch (error) {
+        console.error(error);
+        return {
+            channel: "unknown",
+            groupName: "unknown"
+        };
+    }
+
 }
 
 export default definePlugin({
@@ -109,12 +118,15 @@ export default definePlugin({
         let attachmentUrl: string | undefined;
 
         let attachments = advancedNotification.messageRecord.attachments;
+        let contentType;
+        let imageType;
 
         if (attachments.length > 0) {
-            let contentType = attachments[0].content_type;
+            contentType = attachments[0].content_type;
             // Windows has a 3mb limit on Notification attachments
             if (!attachments[0].spoiler && attachments[0].size < 3_000_000 && (contentType === "image/jpeg" || contentType === "image/png")) {
                 attachmentUrl = attachments[0].proxy_url;
+                imageType = contentType.split("/")[1];
             } else {
                 console.log(`[BN] Unsupported image type ${contentType}, or size (or image is a spoiler)`);
             }
@@ -159,7 +171,7 @@ export default definePlugin({
                     attachmentType: settings.store.notificationImagePosition,
                 },
                 attachmentUrl: settings.store.disableImageLoading ? undefined : attachmentUrl,
-                attachmentType: attachments[0].content_type.split("/")[1],
+                attachmentType: imageType,
                 wAvatarCrop: settings.store.notificationPfpCircle,
                 wHeaderOptions: settings.store.notificationHeaderEnabled ? {
                     channelId: advancedNotification.messageRecord.channel_id,
