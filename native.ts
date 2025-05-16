@@ -11,8 +11,7 @@ interface NotificationData {
 }
 
 interface MessageOptions {
-    attachmentUrl: string;
-    attachmentType: "inline" | "hero",
+    attachmentType: string,
 }
 
 interface HeaderOptions {
@@ -26,55 +25,82 @@ interface ExtraOptions {
     wAttributeText?: string;
     wAvatarCrop?: boolean;
     wHeaderOptions?: HeaderOptions;
+    attachmentUrl?: string;
+    attachmentType?: string;
+}
+
+interface AssetOptions {
+    userId?: string,
+    avatarId?: string,
+
+    downloadUrl?: string;
+    fileType?: string;
 }
 
 let webContents: WebContents | undefined;
 
 // Notifications on Windows have a weird inconsistency where the <image> sometimes doens't load if loaded from https
-function saveAvatarToDisk(userId: string, avatarId: string) {
+function saveAssetToDisk(type: "attachment" | "avatar", options: AssetOptions) {
     // Returns file path if avatar downloaded
     // Returns an empty string if the request fails
-    let baseDir = path.join(os.tmpdir(), "vencordBetterNotifications", "avatars");
+    let baseDir = path.join(os.tmpdir(), "vencordBetterNotifications");
+    let avatarDir = path.join(baseDir, "avatars");
 
-    if (!fs.existsSync(baseDir)) {
-        fs.mkdirSync(baseDir, { recursive: true });
+    if (!fs.existsSync(avatarDir)) {
+        fs.mkdirSync(avatarDir, { recursive: true });
     }
 
-    let targetDir = path.join(baseDir, `${avatarId}.png`);
+    let url: string;
+    let file;
+    let targetDir;
 
-    if (fs.existsSync(targetDir)) {
-        return targetDir;
-    }
-
-    console.log("Could not find profile picture in cache...");
-
-    let url = `https://cdn.discordapp.com/avatars/${userId}/${avatarId}.png?size=256`;
-    let file = fs.createWriteStream(targetDir);
-
-    https.get(url, { timeout: 3000 }, (response) => {
-        response.pipe(file);
-
-        file.on("finish", () => {
-            file.close(() => {
-                return targetDir;
+    if (type === "avatar") {
+        targetDir = path.join(avatarDir, `${options.avatarId}.png`);
+        if (fs.existsSync(targetDir)) {
+            return new Promise((resolve) => {
+                resolve(targetDir);
             });
-        });
+        }
+        console.log("Could not find profile picture in cache...");
 
-    }).on("error", (err) => {
-        fs.unlink(targetDir, () => { });
-        console.error(`Downloading avatar with link ${url} failed:  ${err.message}`);
-        return "";
+        url = `https://cdn.discordapp.com/avatars/${options.userId}/${options.avatarId}.png?size=256`;
+        file = fs.createWriteStream(targetDir);
+
+    } else if (type === "attachment") {
+        targetDir = path.join(baseDir, `attachment.${options.fileType}`);
+
+        console.log("Could not find profile picture in cache...");
+
+        url = options.downloadUrl ?? "";
+        file = fs.createWriteStream(targetDir);
+    }
+
+    return new Promise((resolve) => {
+        https.get(url, { timeout: 3000 }, (response) => {
+            response.pipe(file);
+
+            file.on("finish", () => {
+                file.close(() => {
+                    resolve(targetDir);
+                });
+            });
+
+        }).on("error", (err) => {
+            fs.unlink(targetDir, () => { });
+            console.error(`Downloading avatar with link ${url} failed:  ${err.message}`);
+            resolve("");
+        });
     });
+
 }
 
 function generateXml(
     titleString: string, bodyString: string,
-    avatarId: string, userId: string,
+    avatarLoc: String,
     notificationData: NotificationData,
-    extraOptions?: ExtraOptions
+    extraOptions?: ExtraOptions,
+    attachmentLoc?: string,
 ): string {
-    let avatarUrl = saveAvatarToDisk(userId, avatarId);
-
     return `     
        <toast>
             ${extraOptions?.wHeaderOptions ?
@@ -91,9 +117,10 @@ function generateXml(
                 <binding template="ToastGeneric">
                 <text>${titleString}</text>
                 <text>${bodyString}</text>
-                <image src="${avatarUrl}" ${extraOptions?.wAvatarCrop ? "hint-crop='circle'" : ""} placement="appLogoOverride"  />
+                <image src="${avatarLoc}" ${extraOptions?.wAvatarCrop ? "hint-crop='circle'" : ""} placement="appLogoOverride"  />
 
                 ${extraOptions?.wAttributeText ? `<text placement="attribution">${extraOptions.wAttributeText}</text>` : ""}
+                ${attachmentLoc ? `<image placement="${extraOptions?.wMessageOptions?.attachmentType}" src="${attachmentLoc}" />` : ""}
                 </binding>
             </visual>
         </toast>`;
@@ -106,36 +133,52 @@ export function notify(event: IpcMainInvokeEvent,
     notificationData: NotificationData,
     extraOptions?: ExtraOptions
 ) {
+    let promises = [saveAssetToDisk("avatar", { userId, avatarId })];
 
-    console.log(`[BN] notify notificationData: ${notificationData.channelId}`);
-    let xml = generateXml(titleString, bodyString, avatarId, userId, notificationData, extraOptions);
-    console.log("[BN] Generated ToastXML: " + xml);
+    if (extraOptions?.attachmentUrl) {
+        promises.push(saveAssetToDisk("attachment", { fileType: extraOptions.attachmentType, downloadUrl: extraOptions.attachmentUrl }));
+    }
+    console.log("Creating promise...");
 
-    const notification = new Notification({
-        title: titleString,
-        body: bodyString,
+    Promise.all(promises).then((results) => {
+        console.log("results!");
+        console.log(results);
 
-        // hasReply, replyPlaceholder, and actions only work on macOS
-        hasReply: true,
-        replyPlaceholder: "reply",
-        actions: [{
-            type: "button",
-            text: "Ignore"
-        }],
+        //@ts-ignore
+        let avatar: string = results.at(0);
+        //@ts-ignore
+        let attachment: string | undefined = results.at(1);
 
-        // toastXml only works on Windows
-        // https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/adaptive-interactive-toasts?tabs=xml
-        toastXml: xml
+        console.log(`[BN] notify notificationData: ${notificationData.channelId}`);
+        let xml = generateXml(titleString, bodyString, avatar, notificationData, extraOptions, attachment);
+        console.log("[BN] Generated ToastXML: " + xml);
+
+        const notification = new Notification({
+            title: titleString,
+            body: bodyString,
+
+            // hasReply, replyPlaceholder, and actions only work on macOS
+            hasReply: true,
+            replyPlaceholder: "reply",
+            actions: [{
+                type: "button",
+                text: "Ignore"
+            }],
+
+            // toastXml only works on Windows
+            // https://learn.microsoft.com/en-us/windows/apps/design/shell/tiles-and-notifications/adaptive-interactive-toasts?tabs=xml
+            toastXml: xml
+        });
+
+        notification.addListener("click", () => event.sender.executeJavaScript(`Vencord.Plugins.plugins.BetterNotifications.NotificationClickEvent(${notificationData.channelId})`));
+        notification.on("reply", (event, arg) => {
+            console.log("[BN] Recieved reply!");
+        });
+        notification.on("action", (event, arg) => {
+            console.log("[BN] Action performed!");
+        });
+        notification.show();
     });
-
-    notification.addListener("click", () => event.sender.executeJavaScript(`Vencord.Plugins.plugins.BetterNotifications.NotificationClickEvent(${notificationData.channelId})`));
-    notification.on("reply", (event, arg) => {
-        console.log("[BN] Recieved reply!");
-    });
-    notification.on("action", (event, arg) => {
-        console.log("[BN] Action performed!");
-    });
-    notification.show();
 }
 
 

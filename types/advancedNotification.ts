@@ -7,10 +7,25 @@ export interface AdvancedNotification {
     messageRecord: MessageRecord;
 }
 
+interface AttachmentRecord {
+    content_scan_version: number;
+    content_type: string;
+    filename: string;
+    height: number;
+    id: string;
+    placeholder: string;
+    placeholder_version: number;
+    proxy_url: string;
+    size: number;
+    url: string;
+    width: number;
+    spoiler: boolean;
+}
+
 export interface MessageRecord {
     type: number;
     content: string;
-    attachments: any[];
+    attachments: AttachmentRecord[];
     embeds: any[];
     timestamp: string;
     editedTimestamp: any;

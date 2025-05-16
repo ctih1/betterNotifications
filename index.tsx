@@ -1,5 +1,5 @@
 import definePlugin, { PluginNative, OptionType } from "@utils/types";
-import { ChannelRouter, FluxDispatcher, Select } from "@webpack/common";
+import { Button, ChannelRouter, FluxDispatcher, Select } from "@webpack/common";
 import { findByPropsLazy } from "@webpack";
 import { definePluginSettings, SettingsStore } from "@api/Settings";
 import { sendMessage } from "@utils/discord";
@@ -52,7 +52,20 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         description: "Enable support for notification headers. (Windows only, build 15063 or higher)",
         default: false
-    }
+    },
+    disableImageLoading: {
+        type: OptionType.BOOLEAN,
+        description: "Disables attachments. Use if you have a limited data plan. (Windows only)",
+        default: false
+    },
+    notificationImagePosition: {
+        type: OptionType.SELECT,
+        description: "How notification attachments are placed. (Windows only) ",
+        options: [
+            { label: "Hero (Anniversary update required)", value: "hero", default: true },
+            { label: "Inline (Legacy)", value: "inline" }
+        ]
+    },
 });
 
 function getChannelInfoFromTitle(title: string) {
@@ -68,7 +81,7 @@ export default definePlugin({
     name: "BetterNotifications",
     description: `Improves discord's notifications. \n List of available notification variables: ${Replacements}`,
     authors: [Devs.ctih1],
-    tags: ["native", "better", "notifications"],
+    tags: ["native", "notifications", "better"],
     settings: settings,
 
     patches: [
@@ -89,29 +102,23 @@ export default definePlugin({
     NotificationHandlerHook(...args) {
         console.log("Recieved hooked notification");
         console.log(args);
-
-        let profileUrl: string = "";
-        let attachmentUrl: string = "";
-
-        args.forEach((arg) => {
-            if (arg["isUserAvatar"]) {
-                let attachments = arg.messageRecord.attachments;
-                if (attachments && attachments.size > 0) {
-                    console.log("Found attachment url");
-                    attachmentUrl = attachments[0]["url"];
-                } else {
-                    console.log("Couldnt find attachment");
-                }
-            } else if (arg["body"]) {
-                console.log("Running replacment");
-                profileUrl = arg["senderAvatar"];
-            }
-        });
-
         let replacementMap: Map<string, string> = new Map();
 
         let basicNotification: BasicNotification = args[3];
         let advancedNotification: AdvancedNotification = args[4];
+        let attachmentUrl: string | undefined;
+
+        let attachments = advancedNotification.messageRecord.attachments;
+
+        if (attachments.length > 0) {
+            let contentType = attachments[0].content_type;
+            // Windows has a 3mb limit on Notification attachments
+            if (!attachments[0].spoiler && attachments[0].size < 3_000_000 && (contentType === "image/jpeg" || contentType === "image/png")) {
+                attachmentUrl = attachments[0].proxy_url;
+            } else {
+                console.log(`[BN] Unsupported image type ${contentType}, or size (or image is a spoiler)`);
+            }
+        }
 
         let channelInfo = getChannelInfoFromTitle(args[1]);
 
@@ -138,7 +145,6 @@ export default definePlugin({
             attributeText = attributeText.replace(`{${key}}`, value);
         });
 
-
         Native.notify(
             title,
             body,
@@ -149,6 +155,11 @@ export default definePlugin({
                 messageId: `${basicNotification.message_id}`
             },
             {
+                wMessageOptions: {
+                    attachmentType: settings.store.notificationImagePosition,
+                },
+                attachmentUrl: settings.store.disableImageLoading ? undefined : attachmentUrl,
+                attachmentType: attachments[0].content_type.split("/")[1],
                 wAvatarCrop: settings.store.notificationPfpCircle,
                 wHeaderOptions: settings.store.notificationHeaderEnabled ? {
                     channelId: advancedNotification.messageRecord.channel_id,
