@@ -1,2 +1,0 @@
-websockets==14.2
-desktop-notifier==6.1.1

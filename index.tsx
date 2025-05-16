@@ -1,36 +1,74 @@
 import definePlugin, { PluginNative, OptionType } from "@utils/types";
-import { sendMessage } from "@utils/discord";
-import { MessageStore, showToast, Toasts } from "@webpack/common";
-import { ChannelRouter } from "@webpack/common";
+import { ChannelRouter, FluxDispatcher, Select } from "@webpack/common";
 import { findByPropsLazy } from "@webpack";
-import { MessageActions } from "@webpack/common";
-import { definePluginSettings } from "@api/Settings";
+import { definePluginSettings, SettingsStore } from "@api/Settings";
+import { sendMessage } from "@utils/discord";
+import { AdvancedNotification } from "./types/advancedNotification";
+import { BasicNotification } from "./types/basicNotification";
+import { MessageStore } from "@webpack/common";
+import { Devs } from "@utils/constants";
 
-let socket: WebSocket;
+const Native = VencordNative.pluginHelpers.BetterNotifications as PluginNative<typeof import("./native")>;
+const Kangaroo = findByPropsLazy("jumpToMessage");
+const Replacements = [
+    "username",
+    "body",
+    "channelId",
+    "channelName",
+    "groupName",
+];
 
 const settings = definePluginSettings({
-    notificationTitle: {
+    notificationTitleFormat: {
         type: OptionType.STRING,
-        description: "Notification title content",
-        default: "{SENDERDISPLAYNAME} #{GROUPNAME}",
+        description: "Format of the notification title.",
+        default: "{username}",
     },
-    notificationBody: {
+    notificationBodyFormat: {
         type: OptionType.STRING,
-        description: "Notification body content",
-        default: "{BODY}",
+        description: "Format the notification body.",
+        default: "{body}"
+    },
+    notificationAttribute: {
+        type: OptionType.BOOLEAN,
+        description: "Enables attribute text (Windows only, Anniversary Update required)"
+    },
+    notificationAttributeText: {
+        type: OptionType.STRING,
+        description: "Format of the attribution text.",
+        default: "{channelName}"
     },
     notificationShowPfp: {
         type: OptionType.BOOLEAN,
-        description: "Shows the sender's profile picture as an attachment in the message.",
-        default: true,
+        description: "Includes sender's profile picture in notification. View available variables above.",
+        default: true
     },
+    notificationPfpCircle: {
+        type: OptionType.BOOLEAN,
+        description: "Crop the sender's profile picture to a circle (Windows only)",
+        default: true
+    },
+    notificationHeaderEnabled: {
+        type: OptionType.BOOLEAN,
+        description: "Enable support for notification headers. (Windows only, build 15063 or higher)",
+        default: false
+    }
 });
 
+function getChannelInfoFromTitle(title: string) {
+    let innerInfo = title.split(" (#")[1];
+    let data = innerInfo.slice(0, -1).split(", ");
+    return {
+        channel: data[0],
+        groupName: data[1]
+    };
+}
 
 export default definePlugin({
     name: "BetterNotifications",
-    description: "Improves discord's notifications",
-    authors: [{ name: "ctih1", id: 642441889181728810n }],
+    description: `Improves discord's notifications. \n List of available notification variables: ${Replacements}`,
+    authors: [Devs.ctih1],
+    tags: ["native", "better", "notifications"],
     settings: settings,
 
     patches: [
@@ -41,78 +79,21 @@ export default definePlugin({
                 replace: `
                 async function $1($2,$3,$4,$5,$6) {
                     Vencord.Plugins.plugins.BetterNotifications.NotificationHandlerHook($2, $3, $4, $5, $6); 
-                    console.log("Replaced function $1 with own notification handler");
-                    throw new Error("Intercepted message");
+                    console.log("Replaced function \`$1\` with own notification handler");
+                    return;
                 `
             }
         },
     ],
 
-
-    start() {
-        let connected: boolean = false;
-        let interval;
-
-        socket = new WebSocket("ws://localhost:8660");
-        socket.onerror = (error) => {
-            if (!connected) {
-                showToast("[BetterNotifications] Failed to connect to notification server. Retrying in 10 seconds", Toasts.Type.FAILURE, { duration: 9000 });
-                setTimeout(() => this.start(), 10000);
-            } else {
-                showToast(`[BetterNotifications] Notification server error ${error}`, Toasts.Type.FAILURE, { duration: 30000 });
-            }
-        };
-
-        socket.onopen = (event) => {
-            connected = true;
-            showToast("[BetterNotifications] Connected to notification server", Toasts.Type.SUCCESS, { duration: 6000 });
-            clearInterval(interval);
-        };
-
-        socket.onmessage = (event) => {
-            let json = JSON.parse(event.data);
-            let id = json["id"];
-            let messageId = json["message_id"];
-            let action = json["action"];
-
-            switch (action) {
-                case "reply":
-                    ChannelRouter.transitionToChannel(id);
-                    sendMessage(
-                        id,
-                        { content: json["text"] },
-                        true,
-                        {
-                            "messageReference": {
-                                "channel_id": id,
-                                "message_id": messageId
-                            }
-                        }
-                    );
-                    break;
-
-                case "click":
-                    ChannelRouter.transitionToChannel(id);
-                    break;
-            };
-
-        };
-    },
-
     NotificationHandlerHook(...args) {
         console.log("Recieved hooked notification");
         console.log(args);
 
-        let titleFormat: string = settings.store.notificationTitle;
-        let titleBody: string = settings.store.notificationBody;
-
-        let title: string = titleFormat;
-        let body: string = titleBody;
         let profileUrl: string = "";
         let attachmentUrl: string = "";
 
         args.forEach((arg) => {
-            console.log("Iterating");
             if (arg["isUserAvatar"]) {
                 let attachments = arg.messageRecord.attachments;
                 if (attachments && attachments.size > 0) {
@@ -120,92 +101,92 @@ export default definePlugin({
                     attachmentUrl = attachments[0]["url"];
                 } else {
                     console.log("Couldnt find attachment");
-                    console.log(arg);
                 }
             } else if (arg["body"]) {
                 console.log("Running replacment");
                 profileUrl = arg["senderAvatar"];
-
-                for (let [key, val] of Object.entries(arg)) {
-                    console.log(`{${key.toUpperCase()}}`);
-                    title = title.replaceAll(`{${key.toUpperCase()}}`, `${val}`);
-                    body = body.replaceAll(`{${key.toUpperCase()}}`, `${val}`);
-                }
             }
         });
 
-        let channelId = args[4]["messageRecord"]["channel_id"];
-        let jsonString = JSON.stringify({
-            "title": args[1],
-            "body": args[2],
-            "id": channelId,
-            "message_id": args[3]["message_id"],
-            "guild_id": "none",
-            "avatar_url": (settings.store.notificationShowPfp ? args[0] : undefined),
-            "attachment_url": attachmentUrl
+        let replacementMap: Map<string, string> = new Map();
+
+        let basicNotification: BasicNotification = args[3];
+        let advancedNotification: AdvancedNotification = args[4];
+
+        let channelInfo = getChannelInfoFromTitle(args[1]);
+
+        Replacements.forEach((value) => {
+            replacementMap.set(value, "");
         });
 
-        console.log("Sending following JSON to server");
-        console.log(jsonString);
+        replacementMap.set("username", advancedNotification.messageRecord.author.username);
+        replacementMap.set("body", args[2]);
+        replacementMap.set("channelName", channelInfo.channel);
+        replacementMap.set("channelId", advancedNotification.messageRecord.channel_id);
+        replacementMap.set("groupName", channelInfo.groupName);
 
-        socket.send(jsonString);
+        console.log(replacementMap);
+
+        let title = settings.store.notificationTitleFormat;
+        let body = settings.store.notificationBodyFormat;
+        let attributeText = settings.store.notificationAttributeText;
+
+        replacementMap.forEach((value, key) => {
+            console.log(`[BN] replacing key ${key} -> ${value}`);
+            title = title.replace(`{${key}}`, value);
+            body = body.replace(`{${key}}`, value);
+            attributeText = attributeText.replace(`{${key}}`, value);
+        });
 
 
-        console.log(args);
+        Native.notify(
+            title,
+            body,
+            advancedNotification.messageRecord.author.avatar,
+            advancedNotification.messageRecord.author.id,
+            {
+                channelId: `${advancedNotification.messageRecord.channel_id}`,
+                messageId: `${basicNotification.message_id}`
+            },
+            {
+                wAvatarCrop: settings.store.notificationPfpCircle,
+                wHeaderOptions: settings.store.notificationHeaderEnabled ? {
+                    channelId: advancedNotification.messageRecord.channel_id,
+                    channelName: channelInfo.channel
+                } : undefined,
+                wAttributeText: settings.store.notificationAttribute ? attributeText : undefined
+            }
+        );
     },
 
-    NotificationHandler(...args) {
-        console.log("Intercepted notification with args");
-        console.log(args);
+    NotificationClickEvent(channelId: string) {
+        console.log(`Recieved click! ${channelId}`);
+        ChannelRouter.transitionToChannel(channelId);
+    },
 
-        let titleFormat: string = settings.store.notificationTitle;
-        let titleBody: string = settings.store.notificationBody;
+    NotificationReplyButtonEvent(channelId: string, messageId: string) {
+        setTimeout(() => {
+            ChannelRouter.transitionToChannel(channelId);
+            Kangaroo.jumpToMessage({
+                channelId,
+                messageId,
+                flash: true,
+                jumpType: "INSTANT"
+            });
+        }, 500);
+    },
 
-        let title: string = titleFormat;
-        let body: string = titleBody;
-        let profileUrl: string = "";
-        let attachmentUrl: string = "";
-
-
-        console.log(args.length);
-
-        args.forEach((arg) => {
-            console.log("Iterating");
-            if (!arg["body"]) {
-                let attachments = arg.messageRecord.attachments;
-                if (attachments) {
-                    console.log("Found attachment url");
-                    attachmentUrl = attachments[0]["url"];
-                } else {
-                    console.log("Couldnt find attachment");
-                    console.log(arg);
-                }
-            } else {
-                console.log("Running replacment");
-                profileUrl = arg["senderAvatar"];
-
-                for (let [key, val] of Object.entries(arg)) {
-                    console.log(`{${key.toUpperCase()}}`);
-                    title = title.replaceAll(`{${key.toUpperCase()}}`, `${val}`);
-                    body = body.replaceAll(`{${key.toUpperCase()}}`, `${val}`);
+    NotificationReplyEvent(text: string, channelId: string, messageId: string) {
+        sendMessage(
+            channelId,
+            { content: text },
+            true,
+            {
+                "messageReference": {
+                    "channel_id": channelId,
+                    "message_id": messageId
                 }
             }
-        });
-
-        let channelId = args[1]["messageRecord"]["channel_id"];
-        let jsonString = JSON.stringify({
-            "title": title,
-            "body": body,
-            "id": channelId,
-            "message_id": args[0]["identifier"],
-            "guild_id": "none",
-            "avatar_url": profileUrl,
-            "attachment_url": attachmentUrl
-        });
-
-        console.log("Sending following JSON to server");
-        console.log(jsonString);
-
-        socket.send(jsonString);
+        );
     }
-});
+});;
