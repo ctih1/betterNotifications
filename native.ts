@@ -8,6 +8,7 @@ const path = require("path");
 interface NotificationData {
     channelId: string;
     messageId: string;
+    guildId: string;
 }
 
 interface MessageOptions {
@@ -39,10 +40,12 @@ interface AssetOptions {
 
 let webContents: WebContents | undefined;
 
-// Notifications on Windows have a weird inconsistency where the <image> sometimes doens't load if loaded from https
+// Notifications on Windows have a weird inconsistency where the <image> tag sometimes doesn't load the url inside `src`, 
+// but using a local file works, so we just throw it to %temp%
 function saveAssetToDisk(type: "attachment" | "avatar", options: AssetOptions) {
     // Returns file path if avatar downloaded
     // Returns an empty string if the request fails
+
     let baseDir = path.join(os.tmpdir(), "vencordBetterNotifications");
     let avatarDir = path.join(baseDir, "avatars");
 
@@ -56,11 +59,13 @@ function saveAssetToDisk(type: "attachment" | "avatar", options: AssetOptions) {
 
     if (type === "avatar") {
         targetDir = path.join(avatarDir, `${options.avatarId}.png`);
+
         if (fs.existsSync(targetDir)) {
             return new Promise((resolve) => {
                 resolve(targetDir);
             });
         }
+
         console.log("Could not find profile picture in cache...");
 
         url = `https://cdn.discordapp.com/avatars/${options.userId}/${options.avatarId}.png?size=256`;
@@ -102,7 +107,7 @@ function generateXml(
     attachmentLoc?: string,
 ): string {
     return `     
-       <toast>
+       <toast activationType="protocol" launch="discord://-/channels/${notificationData.guildId}/${notificationData.channelId}/${notificationData.messageId}">
             ${extraOptions?.wHeaderOptions ?
             `
         <header
@@ -170,7 +175,7 @@ export function notify(event: IpcMainInvokeEvent,
             toastXml: xml
         });
 
-        notification.addListener("click", () => event.sender.executeJavaScript(`Vencord.Plugins.plugins.BetterNotifications.NotificationClickEvent(${notificationData.channelId})`));
+        notification.addListener("click", () => event.sender.executeJavaScript(`Vencord.Plugins.plugins.BetterNotifications.NotificationClickEvent("${notificationData.channelId}", "${notificationData.messageId}")`));
         notification.on("reply", (event, arg) => {
             console.log("[BN] Recieved reply!");
         });

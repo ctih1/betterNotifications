@@ -9,7 +9,8 @@ import { MessageStore } from "@webpack/common";
 import { Devs } from "@utils/constants";
 
 const Native = VencordNative.pluginHelpers.BetterNotifications as PluginNative<typeof import("./native")>;
-const Kangaroo = findByPropsLazy("jumpToMessage");
+const Kangaroo = findByPropsLazy("jumpToMessage"); // snippet from quickReply plugin
+
 const Replacements = [
     "username",
     "body",
@@ -164,7 +165,8 @@ export default definePlugin({
             advancedNotification.messageRecord.author.id,
             {
                 channelId: `${advancedNotification.messageRecord.channel_id}`,
-                messageId: `${basicNotification.message_id}`
+                messageId: `${basicNotification.message_id}`,
+                guildId: `${basicNotification.guild_id}`
             },
             {
                 wMessageOptions: {
@@ -182,21 +184,15 @@ export default definePlugin({
         );
     },
 
-    NotificationClickEvent(channelId: string) {
+    NotificationClickEvent(channelId: string, messageId: string) {
         console.log(`Recieved click! ${channelId}`);
         ChannelRouter.transitionToChannel(channelId);
-    },
-
-    NotificationReplyButtonEvent(channelId: string, messageId: string) {
-        setTimeout(() => {
-            ChannelRouter.transitionToChannel(channelId);
-            Kangaroo.jumpToMessage({
-                channelId,
-                messageId,
-                flash: true,
-                jumpType: "INSTANT"
-            });
-        }, 500);
+        Kangaroo.jumpToMessage({
+            channelId,
+            messageId,
+            flash: true,
+            jumpType: "INSTANT"
+        });
     },
 
     NotificationReplyEvent(text: string, channelId: string, messageId: string) {
